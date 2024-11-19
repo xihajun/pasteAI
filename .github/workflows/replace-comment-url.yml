@@ -1,0 +1,138 @@
+name: 替换URL为内容
+
+on:
+  issue_comment:
+    types: [created, edited]
+  issues:
+    types: [opened, edited]
+
+permissions:
+  issues: write
+  pull-requests: write
+  contents: write
+
+jobs:
+  replace-url:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v2
+
+      - name: 设置Python环境
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+
+      - uses: actions/cache@v2
+        with:
+          path: ${{ env.pythonLocation }}
+          key: ${{ env.pythonLocation }}-PyGithub
+
+      - name: 验证 PyGithub 安装
+        run: |
+          python -c "import github" || echo "PyGithub 未正确安装"
+        continue-on-error: true
+
+      - name: 检查PyGithub是否安装
+        id: check-pygithub
+        run: |
+          if python -c "import github" 2>/dev/null; then
+            echo "pygithub_installed=true" >> $GITHUB_OUTPUT
+          else
+            echo "pygithub_installed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 安装依赖
+        if: steps.check-pygithub.outputs.pygithub_installed == 'false'
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests PyGithub
+          pip freeze | grep PyGithub > PyGithub.version
+      
+      - name: 替换URL为内容
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+        run: |
+            import os
+            import re
+            import json
+            from github import Github
+
+            def fetch_comment_content(repo, issue_number, comment_id):
+                try:
+                    # 使用 issue.get_comment 来获取 issue 评论
+                    issue = repo.get_issue(issue_number)
+                    comment = issue.get_comment(comment_id)
+                    return comment.body
+                except Exception as e:
+                    print(f"获取评论内容时发生错误: {str(e)}")
+                    return None
+
+            def update_body(repo, body):
+                # 使用正则表达式匹配GitHub评论URL
+                url_pattern = r'https://github\.com/[\w-]+/[\w-]+/issues/(\d+)#issuecomment-(\d+)'
+                urls = re.findall(url_pattern, body)
+                print(f"找到的URL: {urls}")
+
+                updated = False
+                for issue_number, comment_id in urls:
+                    content = fetch_comment_content(repo, int(issue_number), int(comment_id))
+                    if content:
+                        # 替换时确保只替换特定的URL
+                        pattern = f"https://github.com/.*/issues/{issue_number}#issuecomment-{comment_id}"
+                        new_body = re.sub(pattern, content, body)
+                        if new_body != body:
+                            body = new_body
+                            updated = True
+                            print(f"替换了URL: {issue_number}#issuecomment-{comment_id}")
+                        else:
+                            print(f"URL内容与原内容相同，无需替换: {issue_number}#issuecomment-{comment_id}")
+                    else:
+                        print(f"无法获取URL内容: {issue_number}#issuecomment-{comment_id}")
+
+                return body, updated
+
+            g = Github(os.environ['GITHUB_TOKEN'])
+            repo = g.get_repo(os.environ['GITHUB_REPOSITORY'])
+            print(f"仓库: {repo.full_name}")
+
+            with open(os.environ['GITHUB_EVENT_PATH'], 'r') as event_file:
+                event = json.load(event_file)
+            print(f"事件类型: {event['action']}")
+            print(event)
+
+            event_name = os.environ['GITHUB_EVENT_NAME']
+
+            if event_name == "issues":
+                issue_number = event['issue']['number']
+                issue = repo.get_issue(issue_number)
+                print(f"处理issue #{issue_number}")
+                updated_body, was_updated = update_body(repo, issue.body)
+                if was_updated:
+                    issue.edit(body=updated_body)
+                    print("Issue已更新")
+                else:
+                    print("Issue无需更新")
+
+            elif event_name == "issue_comment":
+                comment_id = event['comment']['id']
+                issue_url = event['comment']['issue_url']
+                issue_number = issue_url.split('/')[-1]
+                # 获取 issue 中的评论
+                comment = repo.get_issue(int(issue_number)).get_comment(comment_id)
+                print(f"处理评论 ID: {comment.id}")
+                updated_body, was_updated = update_body(repo, comment.body)
+                if was_updated:
+                    comment.edit(body=updated_body)
+                    print("评论已更新")
+                else:
+                    print("评论无需更新")
+
+            else:
+                print("未处理的事件类型")
+
+            print("URL替换过程完成")
+
+        shell: python
