@@ -1,5 +1,3 @@
-// DatabaseManager.swift
-
 import Foundation
 import SQLite
 
