@@ -425,6 +425,11 @@ struct ClipboardItemView: View {
                    showingTagDialog = true
                }
                
+               Button("Set Reminder") {
+                   //addReminderWithAppleScript(title: "remind from paste", note:item.content)
+                   ReminderService.shared.addReminder(content: item.content)
+               }
+
                Divider()
                
                if selectedItems.contains(item) && selectedItems.count > 1 {
@@ -487,6 +492,8 @@ struct ClipboardItemView: View {
                 showingPopup = false
             }
         }
+
+
     }
 
     private func handleSelection(forceSelect: Bool = false) {
